@@ -1,101 +1,175 @@
-require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const mongoose = require('mongoose');
-const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const cors = require('cors');
 
 const app = express();
 
-// Enhanced CORS
-app.use(cors({
-  origin: 'http://localhost:3000',
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type']
-}));
+// Enable CORS
+app.use(cors());
 
-// Create uploads directory
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+// =============================================
+// CONFIGURATION
+// =============================================
+const config = {
+  MONGODB_URI: 'mongodb+srv://akilashashimantha84:75yT5kSc38aAtsVS@cluster0.g7rrc6i.mongodb.net/Image_upload?retryWrites=true&w=majority&appName=Cluster0',
+  PORT: 3001,
+  UPLOAD_DIR: path.join(__dirname, 'uploads'),
+  MAX_FILE_SIZE: 5 * 1024 * 1024 // 5MB
+};
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/image-upload', {
+// =============================================
+// MONGODB CONNECTION
+// =============================================
+mongoose.connect(config.MONGODB_URI, {
   useNewUrlParser: true,
-  useUnifiedTopology: true
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 10000,
+  socketTimeoutMS: 45000
+})
+.then(() => console.log('✅ MongoDB connected successfully to Image_upload database'))
+.catch(err => {
+  console.error('❌ MongoDB connection failed:', err.message);
+  process.exit(1);
 });
 
-// Image Schema
+// =============================================
+// DATABASE SCHEMA
+// =============================================
 const imageSchema = new mongoose.Schema({
-  filename: String,
-  originalname: String,
-  path: String,
-  mimetype: String,
-  size: Number,
+  filename: { type: String, required: true },
+  originalname: { type: String, required: true },
+  path: { type: String, required: true },
+  size: { type: Number, required: true },
+  mimetype: { type: String, required: true },
   createdAt: { type: Date, default: Date.now }
 });
-const Image = mongoose.model('Image', imageSchema);
 
-// Multer Configuration
+const Image = mongoose.model('Image', imageSchema, 'images');
+
+// =============================================
+// FILE UPLOAD CONFIG
+// =============================================
+if (!fs.existsSync(config.UPLOAD_DIR)) {
+  fs.mkdirSync(config.UPLOAD_DIR, { recursive: true });
+  console.log(`📁 Created upload directory: ${config.UPLOAD_DIR}`);
+}
+
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
+  destination: (req, file, cb) => {
+    cb(null, config.UPLOAD_DIR);
+  },
   filename: (req, file, cb) => {
-    const uniqueName = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(file.originalname);
-    cb(null, `${uniqueName}${ext}`);
+    const uniqueName = `img-${Date.now()}${ext}`;
+    cb(null, uniqueName);
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }
+  limits: { fileSize: config.MAX_FILE_SIZE },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only JPG, PNG, GIF, or WEBP images are allowed'));
+    }
+  }
 });
 
-// Routes
+// =============================================
+// MIDDLEWARE
+// =============================================
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// =============================================
+// API ENDPOINTS
+// =============================================
 app.post('/api/upload', upload.single('image'), async (req, res) => {
   try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
     const newImage = new Image({
       filename: req.file.filename,
       originalname: req.file.originalname,
       path: req.file.path,
-      mimetype: req.file.mimetype,
-      size: req.file.size
+      size: req.file.size,
+      mimetype: req.file.mimetype
     });
 
-    await newImage.save();
+    const savedImage = await newImage.save();
     
     res.status(201).json({
-      _id: newImage._id,
-      filename: newImage.filename,
-      url: `/uploads/${newImage.filename}`,
-      createdAt: newImage.createdAt
+      success: true,
+      message: 'Image uploaded successfully',
+      image: {
+        id: savedImage._id,
+        name: savedImage.originalname,
+        url: `http://localhost:${config.PORT}/uploads/${savedImage.filename}`,
+        size: savedImage.size,
+        uploadedAt: savedImage.createdAt
+      }
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Upload error:', err);
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
   }
 });
 
 app.get('/api/images', async (req, res) => {
   try {
     const images = await Image.find().sort({ createdAt: -1 });
-    res.json(images.map(img => ({
-      _id: img._id,
-      filename: img.filename,
-      url: `/uploads/${img.filename}`,
-      createdAt: img.createdAt
-    })));
+    res.json({ 
+      success: true,
+      count: images.length,
+      images: images.map(img => ({
+        id: img._id,
+        name: img.originalname,
+        url: `http://localhost:${config.PORT}/uploads/${img.filename}`,
+        size: img.size,
+        uploadedAt: img.createdAt
+      }))
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Error fetching images:', err);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch images' 
+    });
   }
 });
 
-// Serve static files
-app.use('/uploads', express.static(uploadDir));
+// =============================================
+// STATIC FILES AND SERVER START
+// =============================================
+app.use('/uploads', express.static(config.UPLOAD_DIR));
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`Upload directory: ${uploadDir}`);
+// Error handling middleware
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({ 
+      success: false,
+      error: err.message 
+    });
+  }
+  console.error(err);
+  res.status(500).json({ 
+    success: false,
+    error: 'Something went wrong' 
+  });
+});
+
+app.listen(config.PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${config.PORT}`);
+  console.log(`📂 Uploads directory: ${config.UPLOAD_DIR}`);
 });

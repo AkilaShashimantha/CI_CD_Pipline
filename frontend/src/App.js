@@ -9,15 +9,12 @@ function App() {
   const [error, setError] = useState('');
   const [preview, setPreview] = useState('');
 
-  // API configuration
-  const API_URL = 'http://localhost:3001/api';
+  const API_BASE_URL = 'http://localhost:3001';
 
-  // Load images on component mount
   useEffect(() => {
     fetchImages();
   }, []);
 
-  // Generate preview when file is selected
   useEffect(() => {
     if (!selectedFile) {
       setPreview('');
@@ -30,11 +27,10 @@ function App() {
     return () => URL.revokeObjectURL(objectUrl);
   }, [selectedFile]);
 
-  // Fetch all images from backend
   const fetchImages = async () => {
     try {
-      const response = await axios.get(`${API_URL}/images`);
-      setImages(response.data);
+      const { data } = await axios.get(`${API_BASE_URL}/api/images`);
+      setImages(data.images || []);
       setError('');
     } catch (err) {
       setError('Failed to load images. Please try again later.');
@@ -42,7 +38,6 @@ function App() {
     }
   };
 
-  // Handle file upload
   const handleUpload = async (e) => {
     e.preventDefault();
     
@@ -58,34 +53,31 @@ function App() {
       const formData = new FormData();
       formData.append('image', selectedFile);
 
-      await axios.post(`${API_URL}/upload`, formData, {
+      await axios.post(`${API_BASE_URL}/api/upload`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
       });
 
-      // Refresh the image list
       await fetchImages();
     } catch (err) {
-      setError(err.response?.data?.message || 'Upload failed. Please try again.');
+      setError(err.response?.data?.error || 'Upload failed. Please try again.');
       console.error('Upload error:', err);
     } finally {
       setUploading(false);
+      setSelectedFile(null);
     }
   };
 
-  // Handle file selection
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // Validate file type
-    if (!file.type.match('image.*')) {
-      setError('Please select an image file (JPEG, PNG, GIF)');
+    if (!file.type.match('image/(jpeg|png|gif|webp)')) {
+      setError('Only JPG, PNG, GIF, or WEBP images are allowed');
       return;
     }
 
-    // Validate file size (5MB max)
     if (file.size > 5 * 1024 * 1024) {
       setError('File size too large (max 5MB)');
       return;
@@ -99,7 +91,6 @@ function App() {
     <div className="app-container">
       <header>
         <h1>Image Upload Gallery</h1>
-        <p>Upload and manage your images</p>
       </header>
 
       <div className="upload-section">
@@ -111,12 +102,13 @@ function App() {
                 id="file-upload"
                 type="file"
                 onChange={handleFileChange}
-                accept="image/*"
-                className="file-input"
+                accept="image/jpeg, image/png, image/gif, image/webp"
               />
             </label>
             {selectedFile && (
-              <span className="file-name">{selectedFile.name}</span>
+              <span className="file-name">
+                {selectedFile.name} ({(selectedFile.size / 1024).toFixed(2)} KB)
+              </span>
             )}
           </div>
 
@@ -129,16 +121,8 @@ function App() {
           <button
             type="submit"
             disabled={!selectedFile || uploading}
-            className="upload-button"
           >
-            {uploading ? (
-              <>
-                <span className="spinner"></span>
-                Uploading...
-              </>
-            ) : (
-              'Upload Image'
-            )}
+            {uploading ? 'Uploading...' : 'Upload Image'}
           </button>
         </form>
 
@@ -146,37 +130,28 @@ function App() {
       </div>
 
       <div className="gallery-container">
-        <h2>Your Images</h2>
+        <h2>Your Images ({images.length})</h2>
         {images.length === 0 ? (
-          <p className="empty-gallery">No images uploaded yet</p>
+          <p>No images uploaded yet</p>
         ) : (
-        // Update only the image rendering part:
-<div className="image-grid">
-  {images.map((image) => (
-    <div key={image._id} className="image-card">
-      <img
-        src={`http://localhost:3001/uploads/${image.filename}`}
-        alt={image.originalname}
-        onError={(e) => {
-          e.target.src = '/placeholder.jpg';
-          e.target.style.border = '2px dashed #ccc';
-          e.target.alt = 'Failed to load image';
-        }}
-        style={{ 
-          maxHeight: '200px',
-          width: '100%',
-          objectFit: 'cover'
-        }}
-      />
-      <div className="image-info">
-        <span className="image-name">{image.originalname}</span>
-        <span className="image-date">
-          {new Date(image.createdAt).toLocaleDateString()}
-        </span>
-      </div>
-    </div>
-  ))}
-</div>
+          <div className="image-grid">
+            {images.map((image) => (
+              <div key={image.id} className="image-card">
+                <img
+                  src={image.url}
+                  alt={image.name}
+                  onError={(e) => {
+                    e.target.src = '/placeholder.jpg';
+                  }}
+                />
+                <div className="image-info">
+                  <span>{image.name}</span>
+                  <span>{(image.size / 1024).toFixed(2)} KB</span>
+                  <span>{new Date(image.uploadedAt).toLocaleString()}</span>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>
