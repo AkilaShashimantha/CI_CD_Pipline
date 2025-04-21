@@ -23,7 +23,7 @@ const config = {
 // =============================================
 // MONGODB CONNECTION
 // =============================================
-mongoose.connect(config.MONGODB_URI, {
+mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
   serverSelectionTimeoutMS: 10000,
